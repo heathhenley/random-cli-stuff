@@ -11,7 +11,7 @@ import argparse
 import json
 import logging
 
-from lib import mirror
+from lib import copy_tree
 from lib import analyze
 
 from lib.base_handler import HandlerCmdType
@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--verbosity", "-v", action="count", default=0, help="Increase verbosity"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    mirror.add_mirror_subcommand(subparsers)
+    copy_tree.add_copy_tree_subcommand(subparsers)
     analyze.add_analyze_subcommand(subparsers)
     return parser
 

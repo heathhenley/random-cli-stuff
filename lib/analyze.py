@@ -1,9 +1,9 @@
 import argparse
+import csv
 from collections import namedtuple
 import hashlib
 import pathlib
 import logging
-import json
 
 from lib.base_handler import CmdResult
 
@@ -32,8 +32,9 @@ def hash_file(file: pathlib.Path, chunk_size: int = 4096) -> str:
 def add_analyze_subcommand(subparsers: argparse._SubParsersAction) -> None:
     analyze_parser = subparsers.add_parser(
         "analyze",
-        help="Analyze a directory tree",
-        description="Analyze a directory tree, walk try and count images, number of duplicates, etc.",
+        help="Analyze a directory tree - counts files, duplicates, and total size.",
+        description="Analyze a directory tree, walk through and count files, number of duplicates, etc. "
+        "Optionally save the file index to a file for later use.",
     )
     analyze_parser.add_argument(
         "--directory",
@@ -46,7 +47,10 @@ def add_analyze_subcommand(subparsers: argparse._SubParsersAction) -> None:
         type=str,
         required=False,
         default=None,
-        help="The file to save the file index to - it's a JSON with the hash as the key and the list of duplicated files as the values.",
+        help=(
+            "The file to save the file index to - it's a csv file with path "
+            "and hash as the columns."
+        ),
     )
     analyze_parser.add_argument(
         "--extensions",
@@ -94,6 +98,20 @@ def _dedup_maybe(
     return {hash: files for hash, files in duplicates.items() if len(files) > 1}
 
 
+def write_data_file(file: str, data: dict[str, list[str]]) -> bool:
+    try:
+        with open(file, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["path", "hash"])
+            for hash, files in data.items():
+                for file in files:
+                    writer.writerow([file, hash])
+        return True
+    except Exception as e:
+        logging.error(f"Error writing data file: {e}")
+        return False
+
+
 def handle_analyze_command(args: argparse.Namespace) -> CmdResult:
     logging.info(f"Analyzing directory: {args.directory}")
     logging.info(f"Including extensions: {args.extensions}")
@@ -135,9 +153,9 @@ def handle_analyze_command(args: argparse.Namespace) -> CmdResult:
                 f"  Total: {total_images} images,  unique: {len(duplicates)} images, total size: {format_size(total_size)}"
             )
         if hash in duplicates:
-            duplicates[hash].append(str(file))
+            duplicates[hash].append(str(file.relative_to(directory)))
         else:
-            duplicates[hash] = [str(file)]
+            duplicates[hash] = [str(file.relative_to(directory))]
 
     logging.info(f"Total images: {total_images}")
     logging.info(f"Unique images: {len(duplicates)}")
@@ -145,32 +163,14 @@ def handle_analyze_command(args: argparse.Namespace) -> CmdResult:
     logging.info(f"Total size: {format_size(total_size)}")
 
     if args.output_file is not None:
-        try:
-            with open(args.output_file, "w") as f:
-                json.dump(
-                    {
-                        "directory": str(args.directory),
-                        "extensions": list(extensions),
-                        "total_images": total_images,
-                        "total_unique": len(duplicates),
-                        "duplicates": total_images - len(duplicates),
-                        "total_size": format_size(total_size),
-                        "files_by_hash": _dedup_maybe(
-                            duplicates, args.only_dump_duplicates
-                        ),
-                    },
-                    f,
-                    indent=2,
-                )
-            logging.info(f"File index saved to {args.output_file}")
-        except Exception as e:
-            logging.error(f"Error saving file index: {e}")
+        data_to_write = _dedup_maybe(duplicates, args.only_dump_duplicates)
+        if not write_data_file(args.output_file, data_to_write):
+            logging.error(f"Error writing data file: {args.output_file}")
             return {
-                "results": {
-                    "error": str(e),
-                },
+                "results": None,
                 "exit_code": 1,
             }
+
     return {
         "results": {
             "total_images": total_images,
